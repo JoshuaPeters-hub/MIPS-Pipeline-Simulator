@@ -249,6 +249,7 @@ int main() {
   bool stall = false;
   bool branch = false;
   std::bitset<32> branchAddress(0);
+  
   while (1) {
     /* --------------------- WB stage --------------------- */
     // Write back to RF
