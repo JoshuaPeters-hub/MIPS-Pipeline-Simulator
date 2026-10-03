@@ -249,7 +249,7 @@ int main() {
   bool stall = false;
   bool branch = false;
   std::bitset<32> branchAddress(0);
-  
+
   while (1) {
     /* --------------------- WB stage --------------------- */
     // Write back to RF
@@ -283,7 +283,7 @@ int main() {
     /* --------------------- EX stage --------------------- */
     if (!state.EX.nop) {
       //    // come back to this, perform nop
-
+      
       //   } if (state.EX.alu_op == 1) { what is this for i dont think we need
       //   anything outside the !nop and nop
 
@@ -323,6 +323,7 @@ int main() {
       newState.EX.Read_data1 = myRF.readRF(rs);
       newState.EX.Read_data2 = myRF.readRF(rt);
       newState.EX.nop = 0;
+      newState.EX.Imm = bitset<16>(imm);
 
       // for Addu and Subu
       if (opCode == 0x00) {
@@ -396,80 +397,103 @@ int main() {
 
         // set read memory
         newState.EX.rd_mem = 0;
+
         // set write memory
         newState.EX.wrt_mem = 0;
+
         // set write memory
         newState.EX.wrt_enable = 0;
 
         // set EX newstate to 0
         newState.EX.nop = 1;
 
+        // HALT instruction, shouldn't be called tho, already handled in IF
       } else if (opCode == 0x3f) {
         // Halt instruction type
         //  set read memory
         newState.EX.rd_mem = 0;
+
         // set write memory
         newState.EX.wrt_mem = 0;
+
         // set write memory
         newState.EX.wrt_enable = 0;
       }
 
+      // ID.NOP = 1
     } else {
-      if (funct == 0x23) {
-        newState.EX.alu_op = 0;
-      } else {
-        newState.EX.alu_op = 1;
-      }
-      newState.EX.Wrt_reg_addr =
-          bitset<5>((state.ID.Instr >> 11).to_ulong() & 0x1f);
-      newState.EX.wrt_enable = 1;
-      newState.EX.is_I_type = 0;
+      // set nop of EX to 1
+      newState.EX.nop = 1;
     }
-    if (state.EX.wrt_enable) {
-      if (!state.EX.nop && (state.EX.Wrt_reg_addr == newState.EX.Rs ||
-                            (!newState.EX.is_I_type &&
-                             state.EX.Wrt_reg_addr == newState.EX.Rt))) {
-        stall = true;
+
+    // checks if current inst. in EX is lw and it is not nop
+    if (!state.ID.nop && state.EX.rd_mem && !state.EX.nop && state.EX.Wrt_reg_addr != 0) {
+      // check if current inst in ID is addu or subu
+      if (opCode == 0x00) {
+        // check if state EX Wrt_reg_addr is equal to rs or rt
+        if (state.EX.Wrt_reg_addr == rs || state.EX.Wrt_reg_addr == rt) {
+            // stall
+            stall = true;
+        }
+
+        // check if current inst in ID is lw
+      } else if (opCode == 0x23) {
+        // check if state EX Wrt_reg_addr is equal to rs or rt
+        if (state.EX.Wrt_reg_addr == rs) {
+            // stall
+            stall = true;
+        }
+
+        // check if current inst in ID is sw
+      } else if (opCode == 0x2B) {
+        // check if state EX Wrt_reg_addr is equal to rs or rt
+        if (state.EX.Wrt_reg_addr == rs || state.EX.Wrt_reg_addr == rt) {
+            // stall
+            stall = true;
+        }
       }
     }
 
     /* --------------------- IF stage --------------------- */
     if (!state.IF.nop) {
-      // Fetch instruction from memory
-      newState.ID.Instr = myInsMem.readInstr(state.IF.PC);
-
-      // get opcode
-      opCode = stoi(newState.ID.Instr.to_string().substr(0, 6), nullptr, 2);
-
-      // checks if the instr is a HALT instruction
-      if (opCode == 0x3f) {
-        // set new state of IF to nop
-        newState.IF.nop = 1;
-
-        // set new state of ID to nop
-        newState.ID.nop = 1;
-      }
+      // branch
       if (branch) {
         newState.EX.nop = 1;
         branch = false;
         newState.ID = state.ID;
         newState.IF.PC = branchAddress;
         newState.ID.nop = 1;
-      }
-      if (stall) {
+
+        // stall
+      } else if (stall) {
         newState.EX.nop = 1;
         stall = false;
         newState.IF = state.IF;
         newState.ID = state.ID;
 
+        // normal fetch is not branch or stall
       } else {
         // updated new state for ID
         newState.ID.nop = 0;
         newState.IF.nop = 0;
 
-        // update PC
+        // Fetch instruction from memory
         newState.ID.Instr = myInsMem.readInstr(state.IF.PC);
+
+        // get opcode
+        opCode = stoi(newState.ID.Instr.to_string().substr(0, 6), nullptr, 2);
+
+        // update PC
         newState.IF.PC = bitset<32>(state.IF.PC.to_ulong() + 4);
+
+        // checks if the instr is a HALT instruction
+        if (opCode == 0x3f) {
+          // set new state of IF to nop
+          newState.IF.nop = 1;
+
+          // set new state of ID to nop
+          newState.ID.nop = 1;
+        }
       }
 
     } else {
