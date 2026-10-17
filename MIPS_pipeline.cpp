@@ -237,7 +237,16 @@ int main() {
   RF myRF;
   INSMem myInsMem;
   DataMem myDataMem;
-  stateStruct state, newState;
+  stateStruct state{};
+  stateStruct newState{};
+
+  state.IF.PC = bitset<32> (0);
+  state.IF.nop = 0;
+  state.ID.nop = 1;
+  state.EX.nop = 1;
+  state.MEM.nop = 1;
+  state.EX.nop = 1;
+
   int cycle = 0;
   int opCode = 0;
   int funct = 0;
@@ -249,6 +258,8 @@ int main() {
   bool stall = false;
   bool branch = false;
   std::bitset<32> branchAddress(0);
+  bitset<32> tempValue1;
+  bitset<32> tempValue2;
 
   while (1) {
     /* --------------------- WB stage --------------------- */
@@ -265,12 +276,12 @@ int main() {
       newState.WB.Wrt_reg_addr = state.MEM.Wrt_reg_addr;
       newState.WB.nop = false;
       if (state.MEM.wrt_mem && !state.WB.nop && state.WB.wrt_enable &&
-          state.WB.Wrt_reg_addr == state.MEM.Rt) {
+          state.WB.Wrt_reg_addr == state.MEM.Rt && state.WB.Wrt_reg_addr != 0) {
         myDataMem.writeDataMem(state.MEM.ALUresult, state.WB.Wrt_data);
         newState.WB.Wrt_data = state.MEM.ALUresult;
       } else if (state.MEM.wrt_mem == 1) {
         myDataMem.writeDataMem(state.MEM.ALUresult, state.MEM.Store_data);
-        newState.WB.Wrt_data = state.MEM.ALUresult;
+        newState.WB.Wrt_data = state.MEM.Store_data;
       } else if (state.MEM.rd_mem == 1) {
         newState.WB.Wrt_data = myDataMem.readDataMem(state.MEM.ALUresult);
       } else {
@@ -282,12 +293,92 @@ int main() {
 
     /* --------------------- EX stage --------------------- */
     if (!state.EX.nop) {
-      //    // come back to this, perform nop
-      
-      //   } if (state.EX.alu_op == 1) { what is this for i dont think we need
-      //   anything outside the !nop and nop
+      // Send info to Mem
+      newState.MEM.Rs = state.EX.Rs;
+      newState.MEM.Rt = state.EX.Rt;
+      newState.MEM.Wrt_reg_addr = state.EX.Wrt_reg_addr;
 
-    } else {
+      newState.MEM.rd_mem = state.EX.rd_mem;
+      newState.MEM.wrt_mem = state.EX.wrt_mem;
+      newState.MEM.wrt_enable = state.EX.wrt_enable;
+
+      newState.MEM.nop = 0;
+
+      // Store current ALU value
+      bitset<32> tempValue1 = state.EX.Read_data1;
+      bitset<32> tempValue2 = state.EX.Read_data2;
+
+      // WB-EX Rs
+      if ((state.WB.Wrt_reg_addr == state.EX.Rs) && (state.WB.nop == 0) &&
+          (state.WB.wrt_enable == 1) && state.WB.Wrt_reg_addr != 0) {
+        tempValue1 = state.WB.Wrt_data;
+      }
+
+      // WB-EX Rt
+      if ((state.WB.Wrt_reg_addr == state.EX.Rt) && (state.WB.nop == 0) &&
+          (state.WB.wrt_enable == 1) && (state.WB.Wrt_reg_addr != 0)) {
+        if (((state.EX.is_I_type == 0) && (state.EX.wrt_enable == 1)) ||
+            (state.EX.wrt_mem == 1)) {
+          tempValue2 = state.WB.Wrt_data;
+        }
+      }
+
+      // MEM-EX Rs
+      if ((state.MEM.wrt_mem == 0) && (state.MEM.rd_mem == 0) &&
+          (state.MEM.wrt_enable == 1) && (state.MEM.nop == 0) &&
+          (state.MEM.Wrt_reg_addr == state.EX.Rs) &&
+          (state.MEM.Wrt_reg_addr != 0)) {
+        tempValue1 = state.MEM.ALUresult;
+      }
+
+      // MEM-EX Rt
+      if ((state.MEM.nop == 0) && (state.MEM.wrt_mem == 0) &&
+          (state.MEM.Wrt_reg_addr == state.EX.Rt) &&
+          (state.MEM.wrt_enable == 1) && (state.MEM.rd_mem == 0) &&
+          (state.MEM.Wrt_reg_addr != 0)) {
+        if ((state.EX.wrt_mem == 1) || (state.EX.is_I_type == 0)) {
+          tempValue2 = state.MEM.ALUresult;
+        }
+      }
+
+      // addu
+      if ((state.EX.alu_op == 1) && (state.EX.is_I_type == 0)) {
+        newState.MEM.ALUresult =
+            bitset<32>((tempValue1.to_ulong()) + (tempValue2.to_ulong()));
+        // subu
+      } else if ((state.EX.alu_op == 0) && (state.EX.is_I_type == 0)) {
+        newState.MEM.ALUresult =
+            bitset<32>((tempValue1.to_ulong()) - (tempValue2.to_ulong()));
+        // I-type
+      } else if ((state.EX.alu_op == 1) && (state.EX.is_I_type == 1)) {
+        // sign extend variable
+        bitset<32> signExtended = bitset<32>(state.EX.Imm.to_ulong());
+
+        // sign extend
+        if (state.EX.Imm[15] == 0) {
+          for (int i = 16; i < 32; i++) {
+            signExtended[i] = 0;
+          }
+        } else if (state.EX.Imm[15] == 1) {
+          for (int i = 16; i < 32; i++) {
+            signExtended[i] = 1;
+          }
+        }
+
+        // update new state ALU result
+        newState.MEM.ALUresult =
+            bitset<32>(signExtended.to_ulong() + tempValue1.to_ulong());
+
+        // store word instruction
+        if (state.EX.rd_mem == 0 && state.EX.wrt_mem == 1 &&
+            state.EX.wrt_enable == 0) {
+          newState.MEM.Store_data = tempValue2;
+        }
+      }
+      newState.MEM.Store_data = tempValue2;
+    }
+
+    else {
       newState.MEM.nop = 1;
     }
 
@@ -427,29 +518,30 @@ int main() {
     }
 
     // checks if current inst. in EX is lw and it is not nop
-    if (!state.ID.nop && state.EX.rd_mem && !state.EX.nop && state.EX.Wrt_reg_addr != 0) {
+    if (!state.ID.nop && state.EX.rd_mem && !state.EX.nop &&
+        state.EX.Wrt_reg_addr != 0) {
       // check if current inst in ID is addu or subu
       if (opCode == 0x00) {
         // check if state EX Wrt_reg_addr is equal to rs or rt
         if (state.EX.Wrt_reg_addr == rs || state.EX.Wrt_reg_addr == rt) {
-            // stall
-            stall = true;
+          // stall
+          stall = true;
         }
 
         // check if current inst in ID is lw
       } else if (opCode == 0x23) {
         // check if state EX Wrt_reg_addr is equal to rs or rt
         if (state.EX.Wrt_reg_addr == rs) {
-            // stall
-            stall = true;
+          // stall
+          stall = true;
         }
 
         // check if current inst in ID is sw
       } else if (opCode == 0x2B) {
         // check if state EX Wrt_reg_addr is equal to rs or rt
-        if (state.EX.Wrt_reg_addr == rs || state.EX.Wrt_reg_addr == rt) {
-            // stall
-            stall = true;
+        if (state.EX.Wrt_reg_addr == rs) {
+          // stall
+          stall = true;
         }
       }
     }
@@ -483,9 +575,6 @@ int main() {
         // get opcode
         opCode = stoi(newState.ID.Instr.to_string().substr(0, 6), nullptr, 2);
 
-        // update PC
-        newState.IF.PC = bitset<32>(state.IF.PC.to_ulong() + 4);
-
         // checks if the instr is a HALT instruction
         if (opCode == 0x3f) {
           // set new state of IF to nop
@@ -493,6 +582,9 @@ int main() {
 
           // set new state of ID to nop
           newState.ID.nop = 1;
+        } else {
+          // update PC
+          newState.IF.PC = bitset<32>(state.IF.PC.to_ulong() + 4);
         }
       }
 
